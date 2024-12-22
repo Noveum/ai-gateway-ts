@@ -13,6 +13,19 @@ const groqFasterCounter = new Counter('groq_faster');
 const noveumRateLimitCounter = new Counter('noveum_rate_limits');
 const groqRateLimitCounter = new Counter('groq_rate_limits');
 
+// Base options for both local and cloud execution
+const baseOptions = {
+  vus: 1,
+  iterations: 10,
+  batchPerHost: 1,
+  thresholds: {
+    'noveum_success_rate': ['rate>0.95'],
+    'groq_success_rate': ['rate>0.95'],
+    'noveum_latency': ['p(95)<2000'],
+    'groq_latency': ['p(95)<2000'],
+  }
+};
+
 // Configuration
 const NOVEUM_URL = 'https://gate.noveum.ai/v1/chat/completions';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -20,7 +33,51 @@ const API_KEY = __ENV.API_KEY;
 const MAX_RETRIES = 3;
 const BASE_DELAY = 3; // Base delay between requests in seconds
 const RATE_LIMIT_BACKOFF = 5; // Additional delay when rate limit is hit
-const IS_CLOUD = __ENV.CLOUD === 'true'; // Control cloud execution via env variable
+const IS_CLOUD = __ENV.K6_CLOUD_EXECUTION === 'true'; // Use k6's built-in cloud detection
+
+// Export final options based on execution mode
+export const options = {
+  ...baseOptions,
+  ext: {
+    loadimpact: {
+      projectID: 3731397,
+      name: `Noveum vs Groq Comparison - ${new Date().toISOString()}`,
+      distribution: {
+        'amazon:us:palo alto': { loadZone: 'amazon:us:palo alto', percent: 100 },
+      },
+    }
+  }
+};
+
+// Immediate CLI logging for execution mode
+console.log('\n🚀 K6 Load Test Configuration');
+console.log('============================');
+console.log(`🔧 Execution Mode: ${IS_CLOUD ? 'CLOUD' : 'LOCAL'}`);
+console.log(`🔑 K6 Cloud Execution: ${__ENV.K6_CLOUD_EXECUTION}`);
+console.log(`🌍 Load Zone: ${options.ext.loadimpact.distribution['amazon:us:palo alto'].loadZone}`);
+console.log(`📍 Target URLs:`);
+console.log(`   - Noveum: ${NOVEUM_URL}`);
+console.log(`   - Groq: ${GROQ_URL}`);
+
+// Verify cloud setup
+if (IS_CLOUD === true) {
+    console.log('\n⚠️ Cloud Execution Requirements Check:');
+    if (!__ENV.K6_CLOUD_TOKEN) {
+        console.log('❌ K6 Cloud Token not found! Please run:');
+        console.log('   k6 login cloud');
+        console.log('   Then try again.');
+    }
+    console.log(`\n🌩️ Cloud Configuration:`);
+    console.log(`   Project ID: ${options.ext.loadimpact.projectID}`);
+    console.log(`   Test Name: ${options.ext.loadimpact.name}`);
+    console.log(`   Region: ${JSON.stringify(options.ext.loadimpact.distribution)}`);
+}
+
+console.log('\n📊 Test Parameters:');
+console.log(`   Virtual Users: ${baseOptions.vus}`);
+console.log(`   Iterations: ${baseOptions.iterations}`);
+console.log(`   Base Delay: ${BASE_DELAY}s`);
+console.log('============================\n');
 
 // Test payload
 const PAYLOAD = {
@@ -64,37 +121,6 @@ function makeRequestWithRetry(url, payload, headers, serviceName) {
 
   return { response: lastResponse, latency: latency };
 }
-
-// Base options for both local and cloud execution
-const baseOptions = {
-  vus: 1,
-  iterations: 10,
-  batchPerHost: 1,
-  thresholds: {
-    'noveum_success_rate': ['rate>0.95'],
-    'groq_success_rate': ['rate>0.95'],
-    'noveum_latency': ['p(95)<2000'],
-    'groq_latency': ['p(95)<2000'],
-  }
-};
-
-// Cloud-specific options
-const cloudOptions = {
-  ext: {
-    loadimpact: {
-      projectID: 3731397,
-      name: `Noveum vs Groq Comparison - ${new Date().toISOString()}`,
-      distribution: {
-        'amazon:gb:london': { loadZone: 'amazon:gb:london', percent: 100 },
-      },
-    },
-  },
-};
-
-// Export final options based on execution mode
-export const options = IS_CLOUD 
-  ? { ...baseOptions, ...cloudOptions }
-  : baseOptions;
 
 export default function() {
   // Headers for Noveum request
@@ -173,6 +199,18 @@ export function handleSummary(data) {
     return metric?.values?.[property] ?? defaultValue;
   };
 
+  // Enhanced cloud execution logging
+  console.log('\n=== Execution Environment Details ===');
+  console.log(`Mode: ${IS_CLOUD ? 'Cloud Execution 🌩️' : 'Local Execution 💻'}`);
+  if (IS_CLOUD) {
+    console.log('Cloud Run Details:');
+    console.log(`- Run ID: ${__ENV.K6_CLOUD_RUN_ID || 'Not available'}`);
+    console.log(`- Organization: ${__ENV.K6_CLOUD_ORGANIZATION_ID || 'Not available'}`);
+    console.log(`- Project: ${options.ext.loadimpact.projectID}`);
+    console.log(`- Test Name: ${options.ext.loadimpact.name}`);
+  }
+  console.log('===================================\n');
+
   // Only show cloud URL and region info for cloud runs
   if (IS_CLOUD) {
     const cloudURL = `https://app.k6.io/runs/${__ENV.K6_CLOUD_RUN_ID}`;
@@ -180,7 +218,7 @@ export function handleSummary(data) {
     console.log('🔍 View detailed results at:');
     console.log(cloudURL);
     console.log('\nTesting from region:');
-    console.log('- Europe (London)');
+    console.log('- Europe (Frankfurt)');
     console.log('===========================================\n');
   }
 
@@ -292,17 +330,13 @@ export function handleSummary(data) {
 }
 
 /*
-Run locally (from your machine's location):
+For local execution:
 k6 run --env API_KEY=your_key tests/k6_load.js
 
-Run in cloud (from London region by default):
-k6 run --env API_KEY=your_key --env CLOUD=true tests/k6_load.js
+For cloud execution (correct way):
+k6 cloud --env API_KEY=your_key tests/k6_load.js
+   OR
+k6 run -o cloud --env API_KEY=your_key tests/k6_load.js
 
-For multi-region cloud testing, modify the cloudOptions.ext.loadimpact.distribution object with desired regions:
-Example:
-{
-  'amazon:gb:london': { loadZone: 'amazon:gb:london', percent: 34 },
-  'amazon:us:ashburn': { loadZone: 'amazon:us:ashburn', percent: 33 },
-  'amazon:ap:singapore': { loadZone: 'amazon:ap:singapore', percent: 33 }
-}
+Note: The --env CLOUD=true flag is not needed when using -o cloud or k6 cloud command
 */
