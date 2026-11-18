@@ -281,6 +281,8 @@ limitations under the License.
 
 ## 🙏 Acknowledgments
 
+[Shashank Agarwal](https://www.linkedin.com/in/shashankagarwal2/) contributed the [load tests](https://github.com/Noveum/ai-gateway-ts/pull/5) for this version of the gateway.
+
 - Built with [Hono](https://hono.dev/)
 - Deployed on [Cloudflare Workers](https://workers.cloudflare.com/)
 
